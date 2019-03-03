@@ -321,11 +321,11 @@ bool OpenItem(const base::FilePath& full_path) {
 
 void OpenExternal(const GURL& url,
                   const OpenExternalOptions& options,
-                  mate::Arguments* args) {
-  OpenExternalCallback callback;
-  if (args->GetNext(&callback)) {
+                  base::Optional<OpenExternalCallback> callback) {
+  if (callback) {
     // TODO(gabriel): Implement async open if callback is specified
-    std::move(callback).Run(OpenExternal(url, options) ? "" : "Failed to open");
+    std::move(callback.value())
+        .Run(OpenExternal(url, options) ? "" : "Failed to open");
   } else {
     base::CreateCOMSTATaskRunnerWithTraits(
         {base::MayBlock(), base::TaskPriority::USER_BLOCKING})
