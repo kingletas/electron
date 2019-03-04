@@ -17,6 +17,7 @@
 #include "base/strings/string_number_conversions.h"
 #include "base/strings/string_util.h"
 #include "base/task/post_task.h"
+#include "base/threading/thread_task_runner_handle.h"
 #include "base/time/time.h"
 #include "content/public/browser/browser_task_traits.h"
 #include "native_mate/dictionary.h"
@@ -84,14 +85,15 @@ void BeforeStartInUI(base::WeakPtr<URLRequestStreamJob> job,
     return;
   }
 
-  auto subscriber = std::make_unique<mate::StreamSubscriber>(
-      args->isolate(), data.GetHandle(), job);
+  auto subscriber = base::MakeRefCounted<mate::StreamSubscriber>(
+      args->isolate(), data.GetHandle(), job,
+      base::ThreadTaskRunnerHandle::Get());
 
   base::PostTaskWithTraits(
       FROM_HERE, {content::BrowserThread::IO},
       base::BindOnce(&URLRequestStreamJob::StartAsync, job,
-                     std::move(subscriber), base::RetainedRef(response_headers),
-                     ended, error));
+                     base::RetainedRef(subscriber),
+                     base::RetainedRef(response_headers), ended, error));
 }
 
 }  // namespace
@@ -105,12 +107,7 @@ URLRequestStreamJob::URLRequestStreamJob(net::URLRequest* request,
       response_headers_(nullptr),
       weak_factory_(this) {}
 
-URLRequestStreamJob::~URLRequestStreamJob() {
-  if (subscriber_) {
-    content::BrowserThread::DeleteSoon(content::BrowserThread::UI, FROM_HERE,
-                                       std::move(subscriber_));
-  }
-}
+URLRequestStreamJob::~URLRequestStreamJob() = default;
 
 void URLRequestStreamJob::Start() {
   auto request_details = std::make_unique<base::DictionaryValue>();
@@ -123,7 +120,7 @@ void URLRequestStreamJob::Start() {
 }
 
 void URLRequestStreamJob::StartAsync(
-    std::unique_ptr<mate::StreamSubscriber> subscriber,
+    scoped_refptr<mate::StreamSubscriber> subscriber,
     scoped_refptr<net::HttpResponseHeaders> response_headers,
     bool ended,
     int error) {
@@ -194,8 +191,10 @@ int URLRequestStreamJob::ReadRawData(net::IOBuffer* dest, int dest_size) {
 }
 
 void URLRequestStreamJob::DoneReading() {
-  content::BrowserThread::DeleteSoon(content::BrowserThread::UI, FROM_HERE,
-                                     std::move(subscriber_));
+  if (subscriber_) {
+    DCHECK(subscriber_->HasOneRef());
+    subscriber_->Release();
+  }
   write_buffer_.clear();
 }
 
